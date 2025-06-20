@@ -395,27 +395,32 @@ def tts_worker():
 
 threading.Thread(target=tts_worker, daemon=True).start()
 
+import queue
+import threading
+import time
+from pydub import AudioSegment
+from pydub.playback import _play_with_simpleaudio
+
+playback_queue = queue.Queue()
+
 def audio_playback_worker():
     global current_playback
     while True:
+        print("[Buddy][Playback] Waiting for audio...")
         audio = playback_queue.get()
+        print("[Buddy][Playback] Got audio from queue")
         if audio is None:
             break
         try:
-            set_ref_audio(audio.raw_data if hasattr(audio, "raw_data") else audio._data)
-            playback_stop_flag.clear()
-            buddy_talking.set()
+            print("[Buddy][Playback] Playing audio...")
             current_playback = _play_with_simpleaudio(audio)
             while current_playback and current_playback.is_playing():
-                if playback_stop_flag.is_set() or full_duplex_interrupt_flag.is_set():
-                    current_playback.stop()
-                    break
                 time.sleep(0.05)
             current_playback = None
+            print("[Buddy][Playback] Done playing.")
         except Exception as e:
             print(f"[Buddy] Audio playback error: {e}")
         finally:
-            buddy_talking.clear()
             playback_queue.task_done()
 
 threading.Thread(target=audio_playback_worker, daemon=True).start()
@@ -1093,6 +1098,7 @@ def send_homeassistant_command(entity_id, service, data=None):
         if DEBUG:
             print("[Buddy] Home Assistant exception:", e)
         return False
+
 def generate_and_play_kokoro(text, lang=None):
     detected_lang = lang or detect_language(text)
     voice = KOKORO_VOICES.get(detected_lang, KOKORO_VOICES["en"])
@@ -1108,32 +1114,6 @@ def generate_and_play_kokoro(text, lang=None):
         print("[Buddy][TTS] Audio put in playback queue")
     except Exception as e:
         print(f"[Buddy][Kokoro] Błąd TTS: {e}")
-
-def audio_playback_worker():
-    global current_playback
-    while True:
-        print("[Buddy][Playback] Waiting for audio...")
-        audio = playback_queue.get()
-        print("[Buddy][Playback] Got audio from queue")
-        if audio is None:
-            break
-        try:
-            playback_stop_flag.clear()
-            buddy_talking.set()
-            print("[Buddy][Playback] Playing audio...")
-            current_playback = _play_with_simpleaudio(audio)
-            while current_playback and current_playback.is_playing():
-                if playback_stop_flag.is_set() or full_duplex_interrupt_flag.is_set():
-                    current_playback.stop()
-                    break
-                time.sleep(0.05)
-            current_playback = None
-            print("[Buddy][Playback] Done playing.")
-        except Exception as e:
-            print(f"[Buddy] Audio playback error: {e}")
-        finally:
-            buddy_talking.clear()
-            playback_queue.task_done()
 
 # Start the worker in a background thread (only once!)
 threading.Thread(target=audio_playback_worker, daemon=True).start()
@@ -1270,7 +1250,6 @@ os.makedirs(THEMES_PATH, exist_ok=True)
 ref_audio_buffer = np.zeros(WEBRTC_FRAME_SIZE, dtype=np.int16)
 ref_audio_lock = threading.Lock()
 tts_queue = queue.Queue()
-playback_queue = queue.Queue()
 current_playback = None
 playback_stop_flag = threading.Event()
 buddy_talking = threading.Event()
